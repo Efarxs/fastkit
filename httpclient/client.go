@@ -217,6 +217,21 @@ func (c *Client) createClient(useProxy bool) (*http.Client, string, error) {
 	return client, proxyURLStr, nil
 }
 
+// createClientWithoutRedirect 创建不跟随重定向的HTTP客户端
+func (c *Client) createClientWithoutRedirect(useProxy bool) (*http.Client, string, error) {
+	client, proxyURLStr, err := c.createClient(useProxy)
+	if err != nil {
+		return nil, "", err
+	}
+
+	// 禁用自动重定向
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+
+	return client, proxyURLStr, nil
+}
+
 // doRequest 执行HTTP请求
 func (c *Client) doRequest(ctx context.Context, client *http.Client, req *http.Request) (*http.Response, error) {
 	// 添加上下文
@@ -248,4 +263,105 @@ func (c *Client) Post(urlStr string, contentType string, body io.Reader) (*http.
 	}
 	req.Header.Set("Content-Type", contentType)
 	return c.Do(req)
+}
+
+// DoWithoutRedirect 执行HTTP请求但不跟随重定向
+func (c *Client) DoWithoutRedirect(req *http.Request) (*http.Response, error) {
+	return c.DoWithoutRedirectContext(context.Background(), req)
+}
+
+// DoWithoutRedirectContext 执行HTTP请求但不跟随重定向（带上下文）
+func (c *Client) DoWithoutRedirectContext(ctx context.Context, req *http.Request) (*http.Response, error) {
+	maxRetry := c.retryConfig.MaxRetry
+	if maxRetry <= 0 {
+		maxRetry = 1
+	}
+
+	var lastErr error
+	useProxy := c.proxyManager != nil && c.proxyManager.IsEnabled()
+
+	for attempt := 1; attempt <= maxRetry; attempt++ {
+		if c.logger != nil {
+			c.logger.Debug("执行HTTP请求(不跟随重定向)",
+				"method", req.Method,
+				"url", req.URL.String(),
+				"attempt", attempt,
+				"use_proxy", useProxy)
+		}
+
+		// 创建不跟随重定向的HTTP客户端
+		client, proxyURL, err := c.createClientWithoutRedirect(useProxy)
+		if err != nil {
+			if c.logger != nil {
+				c.logger.Warn("创建HTTP客户端失败", "attempt", attempt, "error", err)
+			}
+			lastErr = err
+
+			// 如果是最后一次尝试，且配置了回退到本地，则尝试不用代理
+			if attempt == maxRetry && c.retryConfig.FallbackToLocal && useProxy {
+				if c.logger != nil {
+					c.logger.Info("达到最大重试次数，切换到本地请求")
+				}
+				useProxy = false
+				maxRetry++ // 增加一次本地请求的机会
+				continue
+			}
+
+			time.Sleep(c.retryConfig.RetryDelay * time.Duration(attempt))
+			continue
+		}
+
+		// 如果使用代理，输出代理信息
+		if useProxy && proxyURL != "" && c.logger != nil {
+			c.logger.Info("使用代理IP发送请求(不跟随重定向)",
+				"proxy", proxyURL,
+				"method", req.Method,
+				"url", req.URL.String(),
+				"attempt", attempt)
+		}
+
+		// 执行请求
+		resp, err := c.doRequest(ctx, client, req)
+		if err != nil {
+			if c.logger != nil {
+				c.logger.Warn("HTTP请求失败",
+					"attempt", attempt,
+					"use_proxy", useProxy,
+					"error", err)
+			}
+			lastErr = err
+
+			// 如果使用代理失败，且已经重试多次，考虑释放代理
+			if useProxy && attempt >= 2 && c.proxyManager != nil {
+				if c.logger != nil {
+					c.logger.Warn("代理请求多次失败，释放当前代理IP以便下次获取新IP")
+				}
+				c.proxyManager.ReleaseProxy()
+			}
+
+			// 如果是最后一次尝试，且配置了回退到本地，则尝试不用代理
+			if attempt == maxRetry && c.retryConfig.FallbackToLocal && useProxy {
+				if c.logger != nil {
+					c.logger.Info("达到最大重试次数，切换到本地请求")
+				}
+				useProxy = false
+				maxRetry++ // 增加一次本地请求的机会
+				continue
+			}
+
+			time.Sleep(c.retryConfig.RetryDelay * time.Duration(attempt))
+			continue
+		}
+
+		// 成功返回
+		if useProxy && proxyURL != "" && c.logger != nil {
+			c.logger.Info("代理请求成功(不跟随重定向)",
+				"proxy", proxyURL,
+				"status_code", resp.StatusCode,
+				"attempt", attempt)
+		}
+		return resp, nil
+	}
+
+	return nil, fmt.Errorf("HTTP请求失败，已重试%d次: %w", maxRetry, lastErr)
 }
