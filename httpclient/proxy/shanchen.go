@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/tidwall/gjson"
@@ -55,12 +56,17 @@ func (p *ShanChenProvider) GetProxy() (*ProxyData, error) {
 		return nil, errors.New(msg)
 	}
 
+	pT, err := strconv.Atoi(p.Time)
+	if err != nil {
+		pT = 5
+	}
+
 	return &ProxyData{
 		IP:       res.Get("list.0.sever").String(),
 		Port:     res.Get("list.0.port").String(),
 		Account:  p.Account,
 		Password: p.Password,
-		ExpireAt: time.Now().Add(5 * time.Minute), // 闪臣默认5分钟过期
+		ExpireAt: time.Now().Add(time.Duration(pT) * time.Minute),
 	}, nil
 }
 
