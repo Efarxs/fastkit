@@ -2,6 +2,7 @@ package httpclient
 
 import (
 	"context"
+	"github.com/efarxs/fastkit/httpclient"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,7 +10,7 @@ import (
 )
 
 func TestNew(t *testing.T) {
-	client := New()
+	client := httpclient.New()
 	if client == nil {
 		t.Fatal("创建客户端失败")
 	}

@@ -18,22 +18,29 @@ type ShanChenProvider struct {
 	Time     string // 时间参数
 	Account  string // 代理账号（如果需要认证）
 	Password string // 代理密码（如果需要认证）
+	ApiUrl   string // 提取链接（如果有，优先使用这个）
 }
 
 // NewShanChenProvider 创建闪臣代理提供商
-func NewShanChenProvider(apiKey, timeParam, account, password string) *ShanChenProvider {
+func NewShanChenProvider(apiKey, timeParam, account, password, apiUrl string) *ShanChenProvider {
 	return &ShanChenProvider{
 		ApiKey:   apiKey,
 		Time:     timeParam,
 		Account:  account,
 		Password: password,
+		ApiUrl:   apiUrl,
 	}
 }
 
 // GetProxy 获取代理IP
 func (p *ShanChenProvider) GetProxy() (*ProxyData, error) {
-	u := fmt.Sprintf("https://sch.shanchendaili.com/api.html?action=get_ip&key=%s&time=%s&count=1&type=json&only=0",
-		p.ApiKey, p.Time)
+	var u string
+	if p.ApiUrl != "" {
+		u = p.ApiUrl
+	} else {
+		u = fmt.Sprintf("https://sch.shanchendaili.com/api.html?action=get_ip&key=%s&time=%s&count=1&type=json&only=0",
+			p.ApiKey, p.Time)
+	}
 
 	resp, err := http.Get(u)
 	if err != nil {
